@@ -15,6 +15,7 @@
         .todo-item { animation: slideIn 0.3s ease-out forwards; }
         @keyframes slideIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         .completed { text-decoration: line-through; opacity: 0.5; }
+        .status-badge { transition: all 0.3s ease; }
     </style>
 </head>
 <body class="min-h-screen py-8 px-4">
@@ -38,6 +39,9 @@
         </div>
 
         <div class="text-center mb-10">
+            <div id="modeIndicator" class="inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4 bg-gray-100 text-gray-400 status-badge">
+                Inicializácia...
+            </div>
             <h1 class="text-4xl font-bold text-gray-900 mb-2">Cloud Plánovač</h1>
             <p id="userStatus" class="text-gray-500 text-sm italic">Pripájanie k službe...</p>
         </div>
@@ -65,7 +69,7 @@
 
             <div id="emptyState" class="text-center py-20 text-gray-300">
                 <i class="fas fa-cloud text-6xl mb-4"></i>
-                <p>Váš cloud zoznam je prázdny.</p>
+                <p>Váš zoznam je prázdny.</p>
             </div>
         </div>
 
@@ -89,16 +93,31 @@
         const provider = new GoogleAuthProvider();
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'todo-cloud-app';
 
+        const setMode = (isOnline, label) => {
+            const indicator = document.getElementById('modeIndicator');
+            if (isOnline) {
+                indicator.innerText = 'Online ' + label;
+                indicator.className = 'inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4 bg-green-100 text-green-600 status-badge';
+            } else {
+                indicator.innerText = label;
+                indicator.className = 'inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4 bg-orange-100 text-orange-600 status-badge';
+            }
+        };
+
         const initFirebase = async () => {
             const statusEl = document.getElementById('userStatus');
+            const inputSection = document.getElementById('inputSection');
             
             try {
-                // Pokúsime sa získať konfiguráciu s niekoľkými pokusmi (retry logic)
                 let configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
                 
                 if (!configStr) {
-                    // Fallback pre lokálne prostredie/testovanie, ak premenná chýba
-                    statusEl.innerText = "Lokálny režim (Cloud nedostupný)";
+                    setMode(false, "Lokálny režim");
+                    statusEl.innerText = "Cloud konfigurácia nie je dostupná.";
+                    // V lokálnom režime aspoň odomkneme UI, hoci dáta sa nebudú nikde ukladať
+                    inputSection.classList.remove('hidden');
+                    setTimeout(() => inputSection.classList.add('opacity-100'), 50);
+                    document.getElementById('loginPrompt').classList.add('hidden');
                     return;
                 }
 
@@ -109,7 +128,6 @@
 
                 setupAuthListener();
                 
-                // Priorita: Custom token -> Anonymný login
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
@@ -117,7 +135,8 @@
                 }
             } catch (e) {
                 console.error("Firebase Error:", e);
-                statusEl.innerText = "Chyba cloudu. Skúste obnoviť stránku.";
+                setMode(false, "Chyba konfigurácie");
+                statusEl.innerText = "Chyba pripojenia k databáze.";
                 statusEl.classList.add('text-red-500');
             }
         };
@@ -144,7 +163,9 @@
                     const name = u.isAnonymous ? "Hosť" : (u.displayName || 'Používateľ').split(' ')[0];
                     document.getElementById('userName').innerText = name;
                     document.getElementById('userPhoto').src = u.photoURL || 'https://www.gravatar.com/avatar/000?d=mp&f=y';
-                    userStatus.innerText = u.isAnonymous ? "Úlohy sa ukladajú anonymne" : "Synchronizácia zapnutá";
+                    
+                    setMode(true, "Cloud Plánovač");
+                    userStatus.innerText = u.isAnonymous ? "Úlohy sa ukladajú anonymne do cloudu" : "Vaše úlohy sú plne synchronizované";
                     userStatus.classList.remove('text-red-500');
                     
                     initTodoListener();
@@ -156,23 +177,19 @@
                     inputSection.classList.add('hidden');
                     inputSection.classList.remove('opacity-100');
                     loginPrompt.classList.remove('hidden');
-                    userStatus.innerText = "Vyžaduje sa pripojenie";
+                    userStatus.innerText = "Vyžaduje sa prihlásenie pre Cloud";
                     document.getElementById('todoList').innerHTML = '';
                 }
             });
         };
 
         window.login = async () => {
-            if (!auth) {
-                // Ak auth neexistuje, skúsime ho znova inicializovať pri kliknutí
-                await initFirebase();
-            }
+            if (!auth) await initFirebase();
             if (auth) {
                 try {
                     await signInWithPopup(auth, provider);
                 } catch (err) {
-                    console.warn("Popup blocked or failed:", err.message);
-                    // Pri zlyhaní popupu ostaneme v anonymnom režime
+                    console.warn("Google Login neúspešný (pravdepodobne blokované vyskakovacie okno)");
                 }
             }
         };
@@ -209,6 +226,10 @@
                     console.error("Save failed:", e);
                     input.value = text;
                 }
+            } else if (text && !db) {
+                // Lokálny fallback pre demo účely bez DB
+                renderTodos([{ id: Date.now(), text, completed: false }]);
+                input.value = '';
             }
         };
 
@@ -264,7 +285,6 @@
             stats.innerText = `${remaining} úloh zostáva`;
         }
 
-        // Štart
         window.addEventListener('load', initFirebase);
         
         document.getElementById('todoInput').addEventListener('keypress', (e) => {
