@@ -39,16 +39,16 @@
 
         <div class="text-center mb-10">
             <h1 class="text-4xl font-bold text-gray-900 mb-2">Cloud Plánovač</h1>
-            <p id="userStatus" class="text-gray-500 text-sm">Prihláste sa pre synchronizáciu úloh</p>
+            <p id="userStatus" class="text-gray-500 text-sm">Pripájanie k službe...</p>
         </div>
 
-        <!-- Vstupná časť (viditeľná len po prihlásení) -->
+        <!-- Vstupná časť -->
         <div id="inputSection" class="hidden opacity-0 transition-opacity duration-500">
             <div class="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 mb-8">
                 <div class="flex gap-3">
                     <input type="text" id="todoInput" placeholder="Čo treba urobiť?" 
                         class="flex-1 bg-gray-50 border border-gray-200 rounded-2xl py-3 px-5 focus:outline-none focus:ring-2 focus:ring-blue-500 transition text-gray-800">
-                    <button onclick="addTodo()" class="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-100">
+                    <button onclick="addTodo()" id="addBtn" class="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-100">
                         <i class="fas fa-plus"></i>
                     </button>
                 </div>
@@ -73,7 +73,7 @@
         <div id="loginPrompt" class="text-center py-20 bg-white rounded-3xl border border-dashed border-gray-200">
             <i class="fas fa-lock text-4xl text-gray-200 mb-4"></i>
             <h3 class="text-xl font-bold text-gray-700 mb-2">Prístup k úlohám zamknutý</h3>
-            <p class="text-gray-500 max-w-xs mx-auto mb-6">Ak chcete vidieť svoje úlohy na všetkých zariadeniach, prihláste sa cez Google.</p>
+            <p class="text-gray-500 max-w-xs mx-auto mb-6">Pre synchronizáciu medzi zariadeniami sa prihláste. Ak Google nefunguje, použijeme anonymný režim.</p>
             <button onclick="login()" class="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-100">
                 Aktivovať synchronizáciu
             </button>
@@ -82,128 +82,171 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        // Inicializácia Firebase
+        let app, auth, db;
         const provider = new GoogleAuthProvider();
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'todo-cloud-app';
+
+        try {
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+                apiKey: "",
+                authDomain: "",
+                projectId: "",
+                storageBucket: "",
+                messagingSenderId: "",
+                appId: ""
+            };
+
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+        } catch (e) {
+            console.error("Firebase init failed:", e);
+            document.getElementById('userStatus').innerText = "Chyba konfigurácie databázy";
+        }
 
         let user = null;
         let unsubscribe = null;
 
-        // Prihlásenie
-        window.login = async () => {
+        // Pomocná funkcia na bezpečné prihlásenie
+        const performAuth = async (useGoogle = false) => {
+            if (!auth) return;
             try {
-                await signInWithPopup(auth, provider);
+                if (useGoogle) {
+                    await signInWithPopup(auth, provider);
+                } else if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
             } catch (err) {
-                console.error("Login Error:", err);
+                console.warn("Auth zlyhal:", err.message);
+                if (useGoogle || !user) {
+                    try { await signInAnonymously(auth); } catch(e) {}
+                }
             }
         };
 
-        // Odhlásenie
+        // Úvodné prihlásenie
+        if (auth) performAuth();
+
+        window.login = () => performAuth(true);
         window.logout = () => signOut(auth);
 
-        onAuthStateChanged(auth, (u) => {
-            const userInfo = document.getElementById('userInfo');
-            const loginBtn = document.getElementById('loginBtn');
-            const inputSection = document.getElementById('inputSection');
-            const loginPrompt = document.getElementById('loginPrompt');
-            const userStatus = document.getElementById('userStatus');
+        if (auth) {
+            onAuthStateChanged(auth, (u) => {
+                const userInfo = document.getElementById('userInfo');
+                const loginBtn = document.getElementById('loginBtn');
+                const inputSection = document.getElementById('inputSection');
+                const loginPrompt = document.getElementById('loginPrompt');
+                const userStatus = document.getElementById('userStatus');
 
-            if (u) {
-                user = u;
-                // UI zmeny
-                userInfo.classList.remove('hidden');
-                loginBtn.classList.add('hidden');
-                inputSection.classList.remove('hidden');
-                inputSection.classList.add('opacity-100');
-                loginPrompt.classList.add('hidden');
-                
-                document.getElementById('userName').innerText = u.displayName.split(' ')[0];
-                document.getElementById('userPhoto').src = u.photoURL || 'https://via.placeholder.com/32';
-                userStatus.innerText = "Vaše úlohy sú v bezpečí v cloude";
-                
-                initTodoListener();
-            } else {
-                user = null;
-                if (unsubscribe) unsubscribe();
-                userInfo.classList.add('hidden');
-                loginBtn.classList.remove('hidden');
-                inputSection.classList.add('hidden');
-                inputSection.classList.remove('opacity-100');
-                loginPrompt.classList.remove('hidden');
-                userStatus.innerText = "Prihláste sa pre synchronizáciu úloh";
-                document.getElementById('todoList').innerHTML = '';
-            }
-        });
+                if (u) {
+                    user = u;
+                    userInfo.classList.remove('hidden');
+                    loginBtn.classList.add('hidden');
+                    inputSection.classList.remove('hidden');
+                    setTimeout(() => inputSection.classList.add('opacity-100'), 50);
+                    loginPrompt.classList.add('hidden');
+                    
+                    const name = u.isAnonymous ? "Hosť" : (u.displayName || 'Používateľ').split(' ')[0];
+                    document.getElementById('userName').innerText = name;
+                    document.getElementById('userPhoto').src = u.photoURL || 'https://www.gravatar.com/avatar/000?d=mp&f=y';
+                    userStatus.innerText = u.isAnonymous ? "Režim hosťa (Cloud aktívny)" : "Vaše úlohy sú synchronizované";
+                    
+                    initTodoListener();
+                } else {
+                    user = null;
+                    if (unsubscribe) unsubscribe();
+                    userInfo.classList.add('hidden');
+                    loginBtn.classList.remove('hidden');
+                    inputSection.classList.add('hidden');
+                    inputSection.classList.remove('opacity-100');
+                    loginPrompt.classList.remove('hidden');
+                    userStatus.innerText = "Prihláste sa pre synchronizáciu úloh";
+                    document.getElementById('todoList').innerHTML = '';
+                }
+            });
+        }
 
         function initTodoListener() {
-            if (!user) return;
-            const q = collection(db, 'artifacts', appId, 'users', user.uid, 'todos');
-            
-            unsubscribe = onSnapshot(q, (snapshot) => {
-                const todos = [];
-                snapshot.forEach((doc) => {
-                    todos.push({ id: doc.id, ...doc.data() });
+            if (!user || !db) return;
+            try {
+                const q = collection(db, 'artifacts', appId, 'users', user.uid, 'todos');
+                unsubscribe = onSnapshot(q, (snapshot) => {
+                    const todos = [];
+                    snapshot.forEach((doc) => {
+                        todos.push({ id: doc.id, ...doc.data() });
+                    });
+                    todos.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                    renderTodos(todos);
+                }, (error) => {
+                    console.error("Firestore Error:", error);
                 });
-                todos.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-                renderTodos(todos);
-            }, (error) => {
-                console.error("Firestore Error:", error);
-            });
+            } catch (e) {
+                console.error("Listener failed:", e);
+            }
         }
 
         window.addTodo = async () => {
             const input = document.getElementById('todoInput');
             const text = input.value.trim();
-            if (text && user) {
+            if (text && user && db) {
+                const oldVal = input.value;
                 input.value = '';
-                await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'todos'), {
-                    text,
-                    completed: false,
-                    createdAt: serverTimestamp()
-                });
+                try {
+                    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'todos'), {
+                        text,
+                        completed: false,
+                        createdAt: serverTimestamp()
+                    });
+                } catch (e) {
+                    console.error("Chyba pri ukladaní:", e);
+                    input.value = oldVal;
+                }
             }
         };
 
         window.toggleTodo = async (id, currentStatus) => {
-            if (!user) return;
-            const todoRef = doc(db, 'artifacts', appId, 'users', user.uid, 'todos', id);
-            await updateDoc(todoRef, { completed: !currentStatus });
+            if (!user || !db) return;
+            try {
+                const todoRef = doc(db, 'artifacts', appId, 'users', user.uid, 'todos', id);
+                await updateDoc(todoRef, { completed: !currentStatus });
+            } catch (e) { console.error(e); }
         };
 
         window.deleteTodo = async (id) => {
-            if (!user) return;
-            await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'todos', id));
+            if (!user || !db) return;
+            try {
+                await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'todos', id));
+            } catch (e) { console.error(e); }
         };
 
         window.clearCompleted = async () => {
-            if (!user) return;
-            const q = collection(db, 'artifacts', appId, 'users', user.uid, 'todos');
-            const snapshot = await getDocs(q);
-            const batch = writeBatch(db);
-            snapshot.forEach(doc => {
-                if (doc.data().completed) batch.delete(doc.ref);
-            });
-            await batch.commit();
+            if (!user || !db) return;
+            try {
+                const q = collection(db, 'artifacts', appId, 'users', user.uid, 'todos');
+                const snapshot = await getDocs(q);
+                const batch = writeBatch(db);
+                snapshot.forEach(doc => {
+                    if (doc.data().completed) batch.delete(doc.ref);
+                });
+                await batch.commit();
+            } catch (e) { console.error(e); }
         };
 
         function renderTodos(todos) {
             const list = document.getElementById('todoList');
             const emptyState = document.getElementById('emptyState');
             const stats = document.getElementById('stats');
+            if (!list) return;
             
             list.innerHTML = '';
-            
-            if (todos.length === 0) {
-                emptyState.classList.remove('hidden');
-            } else {
-                emptyState.classList.add('hidden');
-            }
+            if (todos.length === 0) emptyState.classList.remove('hidden');
+            else emptyState.classList.add('hidden');
 
             todos.forEach((todo) => {
                 const li = document.createElement('li');
@@ -221,7 +264,6 @@
                 `;
                 list.appendChild(li);
             });
-
             const remaining = todos.filter(t => !t.completed).length;
             stats.innerText = `${remaining} úloh zostáva`;
         }
