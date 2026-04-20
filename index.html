@@ -16,6 +16,7 @@
         @keyframes slideIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         .completed { text-decoration: line-through; opacity: 0.5; }
         .status-badge { transition: all 0.3s ease; }
+        button:active { transform: scale(0.95); }
     </style>
 </head>
 <body class="min-h-screen py-8 px-4">
@@ -27,13 +28,13 @@
                 <div id="userInfo" class="hidden flex items-center gap-3 pl-2">
                     <img id="userPhoto" src="" alt="" class="w-8 h-8 rounded-full">
                     <span id="userName" class="text-sm font-semibold text-gray-700"></span>
-                    <button onclick="window.logout()" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-xl transition">
+                    <button id="logoutBtn" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-xl transition">
                         Odhlásiť
                     </button>
                 </div>
-                <button id="loginBtn" onclick="window.login()" class="flex items-center gap-2 bg-white text-gray-700 px-4 py-2 rounded-xl text-sm font-bold border border-gray-200 hover:bg-gray-50 transition">
+                <button id="loginBtn" class="flex items-center gap-2 bg-white text-gray-700 px-4 py-2 rounded-xl text-sm font-bold border border-gray-200 hover:bg-gray-50 transition">
                     <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-4 h-4 text-xs" alt="G">
-                    Prihlásiť cez Google
+                    Prihlásiť
                 </button>
             </div>
         </div>
@@ -43,16 +44,16 @@
                 Inicializácia...
             </div>
             <h1 class="text-4xl font-bold text-gray-900 mb-2">Cloud Plánovač</h1>
-            <p id="userStatus" class="text-gray-500 text-sm italic">Pripájanie k službe...</p>
+            <p id="userStatus" class="text-gray-500 text-sm italic">Pripájanie...</p>
         </div>
 
         <!-- Vstupná časť -->
-        <div id="inputSection" class="hidden opacity-0 transition-opacity duration-500">
+        <div id="inputSection" class="opacity-0 transition-opacity duration-500">
             <div class="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 mb-8">
                 <div class="flex gap-3">
                     <input type="text" id="todoInput" placeholder="Čo treba urobiť?" 
                         class="flex-1 bg-gray-50 border border-gray-200 rounded-2xl py-3 px-5 focus:outline-none focus:ring-2 focus:ring-blue-500 transition text-gray-800">
-                    <button onclick="window.addTodo()" id="addBtn" class="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-100">
+                    <button id="addBtn" class="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-100">
                         <i class="fas fa-plus"></i>
                     </button>
                 </div>
@@ -61,7 +62,7 @@
             <div class="flex justify-between items-center mb-6 px-2">
                 <div id="stats" class="text-sm font-semibold text-gray-400 uppercase tracking-wider">0 úloh</div>
                 <div class="flex gap-2 text-xs font-bold">
-                    <button onclick="window.clearCompleted()" class="px-3 py-1 rounded-lg text-red-400 hover:bg-red-50">Vymazať hotové</button>
+                    <button id="clearCompletedBtn" class="px-3 py-1 rounded-lg text-red-400 hover:bg-red-50">Vymazať hotové</button>
                 </div>
             </div>
 
@@ -74,213 +75,181 @@
         </div>
 
         <!-- Stav pred prihlásením -->
-        <div id="loginPrompt" class="text-center py-20 bg-white rounded-3xl border border-dashed border-gray-200">
+        <div id="loginPrompt" class="hidden text-center py-20 bg-white rounded-3xl border border-dashed border-gray-200">
             <i class="fas fa-lock text-4xl text-gray-200 mb-4"></i>
-            <h3 class="text-xl font-bold text-gray-700 mb-2">Prístup k úlohám zamknutý</h3>
-            <p class="text-gray-500 max-w-xs mx-auto mb-6">Pre synchronizáciu medzi zariadeniami sa prihláste. Ak Google nefunguje, použijeme anonymný režim.</p>
-            <button onclick="window.login()" class="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-100">
-                Aktivovať synchronizáciu
+            <h3 class="text-xl font-bold text-gray-700 mb-2">Synchronizácia vypnutá</h3>
+            <p class="text-gray-500 max-w-xs mx-auto mb-6">Pre ukladanie do cloudu sa prihláste.</p>
+            <button id="activateSyncBtn" class="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-100">
+                Povoliť Cloud
             </button>
         </div>
     </div>
 
+    <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        let app, auth, db;
+        let db, auth;
         const provider = new GoogleAuthProvider();
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'todo-cloud-app';
 
-        const setMode = (isOnline, label) => {
-            const indicator = document.getElementById('modeIndicator');
-            if (indicator) {
-                indicator.innerText = (isOnline ? 'Online ' : '') + label;
-                indicator.className = `inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4 status-badge ${isOnline ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'}`;
-            }
+        const ui = {
+            input: document.getElementById('todoInput'),
+            list: document.getElementById('todoList'),
+            stats: document.getElementById('stats'),
+            indicator: document.getElementById('modeIndicator'),
+            status: document.getElementById('userStatus'),
+            inputSection: document.getElementById('inputSection'),
+            loginPrompt: document.getElementById('loginPrompt'),
+            userInfo: document.getElementById('userInfo'),
+            loginBtn: document.getElementById('loginBtn'),
+            userName: document.getElementById('userName'),
+            userPhoto: document.getElementById('userPhoto'),
+            emptyState: document.getElementById('emptyState')
         };
 
-        const initFirebase = async () => {
-            const statusEl = document.getElementById('userStatus');
-            const inputSection = document.getElementById('inputSection');
-            const loginPrompt = document.getElementById('loginPrompt');
-            
+        const setModeUI = (isOnline, label) => {
+            if (!ui.indicator) return;
+            ui.indicator.innerText = (isOnline ? 'Online ' : '') + label;
+            ui.indicator.className = `inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4 status-badge ${isOnline ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'}`;
+        };
+
+        // Zobraziť UI okamžite pre lepšiu odozvu
+        ui.inputSection.classList.remove('hidden');
+        ui.inputSection.classList.add('opacity-100');
+
+        async function init() {
             try {
                 let configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
-                
-                if (!configStr) {
-                    setMode(false, "Lokálny režim");
-                    statusEl.innerText = "Cloud konfigurácia nie je dostupná.";
-                    inputSection.classList.remove('hidden');
-                    setTimeout(() => inputSection.classList.add('opacity-100'), 50);
-                    loginPrompt.classList.add('hidden');
-                    return;
-                }
+                if (!configStr) throw new Error("Chýba konfigurácia");
 
                 const config = JSON.parse(configStr);
-                app = initializeApp(config);
+                const app = initializeApp(config);
                 auth = getAuth(app);
                 db = getFirestore(app);
 
-                setupAuthListener();
-                
-                // Priorita prihlásenia
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    try {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } catch (e) {
-                        await signInAnonymously(auth);
-                    }
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (e) {
-                console.error("Firebase Error:", e);
-                setMode(false, "Chyba DB");
-                statusEl.innerText = "Chyba pripojenia.";
-            }
-        };
-
-        let user = null;
-        let unsubscribe = null;
-
-        const setupAuthListener = () => {
-            onAuthStateChanged(auth, (u) => {
-                const userInfo = document.getElementById('userInfo');
-                const loginBtn = document.getElementById('loginBtn');
-                const inputSection = document.getElementById('inputSection');
-                const loginPrompt = document.getElementById('loginPrompt');
-                const userStatus = document.getElementById('userStatus');
-
-                if (u) {
-                    user = u;
-                    userInfo.classList.remove('hidden');
-                    loginBtn.classList.add('hidden');
-                    inputSection.classList.remove('hidden');
-                    setTimeout(() => inputSection.classList.add('opacity-100'), 50);
-                    loginPrompt.classList.add('hidden');
-                    
-                    const name = u.isAnonymous ? "Hosť" : (u.displayName || 'Používateľ').split(' ')[0];
-                    document.getElementById('userName').innerText = name;
-                    document.getElementById('userPhoto').src = u.photoURL || 'https://www.gravatar.com/avatar/000?d=mp&f=y';
-                    
-                    setMode(true, "Cloud Plánovač");
-                    userStatus.innerText = u.isAnonymous ? "Anonymný cloud" : "Synchronizácia aktívna";
-                    
-                    initTodoListener();
-                } else {
-                    user = null;
-                    if (unsubscribe) unsubscribe();
-                    userInfo.classList.add('hidden');
-                    loginBtn.classList.remove('hidden');
-                    inputSection.classList.add('hidden');
-                    loginPrompt.classList.remove('hidden');
-                }
-            });
-        };
-
-        // EXPLICITNÉ PRIRADENIE K WINDOW (Pre fungovanie onclick)
-        window.login = async () => {
-            if (!auth) await initFirebase();
-            if (auth) {
-                try {
-                    await signInWithPopup(auth, provider);
-                } catch (err) {
-                    console.warn("Login popup blocked:", err.code);
-                    await signInAnonymously(auth);
-                }
-            }
-        };
-
-        window.logout = () => {
-            if (auth) signOut(auth).then(() => signInAnonymously(auth));
-        };
-
-        function initTodoListener() {
-            if (!user || !db) return;
-            const q = collection(db, 'artifacts', appId, 'users', user.uid, 'todos');
-            if (unsubscribe) unsubscribe();
-
-            unsubscribe = onSnapshot(q, (snapshot) => {
-                const todos = [];
-                snapshot.forEach((doc) => {
-                    todos.push({ id: doc.id, ...doc.data() });
+                onAuthStateChanged(auth, (user) => {
+                    if (user) handleUserIn(user);
+                    else handleUserOut();
                 });
-                todos.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-                renderTodos(todos);
-            }, (error) => console.error(error));
+
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+            } catch (e) {
+                setModeUI(false, "Lokálny režim");
+                ui.status.innerText = "Pracujete lokálne.";
+            }
         }
 
-        window.addTodo = async () => {
-            const input = document.getElementById('todoInput');
-            const text = input.value.trim();
-            if (text && user && db) {
-                input.value = '';
-                await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'todos'), {
+        function handleUserIn(user) {
+            ui.userInfo.classList.remove('hidden');
+            ui.loginBtn.classList.add('hidden');
+            ui.loginPrompt.classList.add('hidden');
+            
+            ui.userName.innerText = user.isAnonymous ? "Hosť" : (user.displayName || 'Používateľ');
+            ui.userPhoto.src = user.photoURL || 'https://www.gravatar.com/avatar/000?d=mp&f=y';
+            
+            setModeUI(true, "Cloud");
+            ui.status.innerText = "Synchronizácia beží";
+
+            const q = collection(db, 'artifacts', appId, 'users', user.uid, 'todos');
+            onSnapshot(q, (snapshot) => {
+                const todos = [];
+                snapshot.forEach(d => todos.push({id: d.id, ...d.data()}));
+                todos.sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                render(todos);
+            });
+        }
+
+        function handleUserOut() {
+            ui.userInfo.classList.add('hidden');
+            ui.loginBtn.classList.remove('hidden');
+            ui.loginPrompt.classList.remove('hidden');
+        }
+
+        function render(todos) {
+            ui.list.innerHTML = '';
+            if (todos.length === 0) ui.emptyState.classList.remove('hidden');
+            else ui.emptyState.classList.add('hidden');
+
+            todos.forEach(todo => {
+                const li = document.createElement('li');
+                li.className = 'todo-item bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between group';
+                
+                li.innerHTML = `
+                    <div class="flex items-center gap-4">
+                        <button class="check-btn w-6 h-6 rounded-full border-2 ${todo.completed ? 'bg-green-500 border-green-500' : 'border-gray-200'} flex items-center justify-center transition">
+                            ${todo.completed ? '<i class="fas fa-check text-white text-xs"></i>' : ''}
+                        </button>
+                        <span class="text-gray-700 ${todo.completed ? 'completed' : ''}">${todo.text}</span>
+                    </div>
+                    <button class="del-btn text-gray-400 hover:text-red-500 md:opacity-0 group-hover:opacity-100 transition px-2">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                `;
+
+                li.querySelector('.check-btn').onclick = () => {
+                    if (!db || !auth.currentUser) return;
+                    updateDoc(doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'todos', todo.id), {
+                        completed: !todo.completed
+                    });
+                };
+
+                li.querySelector('.del-btn').onclick = () => {
+                    if (!db || !auth.currentUser) return;
+                    deleteDoc(doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'todos', todo.id));
+                };
+
+                ui.list.appendChild(li);
+            });
+            ui.stats.innerText = `${todos.filter(t => !t.completed).length} úloh zostáva`;
+        }
+
+        // Akcie priradené po načítaní
+        document.getElementById('addBtn').addEventListener('click', async () => {
+            const text = ui.input.value.trim();
+            if (text && auth?.currentUser && db) {
+                ui.input.value = '';
+                await addDoc(collection(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'todos'), {
                     text,
                     completed: false,
                     createdAt: serverTimestamp()
                 });
             }
+        });
+
+        ui.input.onkeypress = (e) => { if (e.key === 'Enter') document.getElementById('addBtn').click(); };
+
+        const loginAction = async () => {
+            if (!auth) return;
+            try {
+                await signInWithPopup(auth, provider);
+            } catch (e) {
+                await signInAnonymously(auth);
+            }
         };
 
-        window.toggleTodo = async (id, currentStatus) => {
-            if (!user || !db) return;
-            const todoRef = doc(db, 'artifacts', appId, 'users', user.uid, 'todos', id);
-            await updateDoc(todoRef, { completed: !currentStatus });
-        };
+        document.getElementById('loginBtn').onclick = loginAction;
+        document.getElementById('activateSyncBtn').onclick = loginAction;
 
-        window.deleteTodo = async (id) => {
-            if (!user || !db) return;
-            await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'todos', id));
-        };
+        document.getElementById('logoutBtn').onclick = () => auth && signOut(auth).then(() => signInAnonymously(auth));
 
-        window.clearCompleted = async () => {
-            if (!user || !db) return;
-            const q = collection(db, 'artifacts', appId, 'users', user.uid, 'todos');
-            const snapshot = await getDocs(q);
+        document.getElementById('clearCompletedBtn').onclick = async () => {
+            if (!auth?.currentUser || !db) return;
+            const q = collection(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'todos');
+            const snap = await getDocs(q);
             const batch = writeBatch(db);
-            snapshot.forEach(doc => {
-                if (doc.data().completed) batch.delete(doc.ref);
-            });
+            snap.forEach(d => { if (d.data().completed) batch.delete(d.ref); });
             await batch.commit();
         };
 
-        function renderTodos(todos) {
-            const list = document.getElementById('todoList');
-            const emptyState = document.getElementById('emptyState');
-            const stats = document.getElementById('stats');
-            
-            list.innerHTML = '';
-            if (todos.length === 0) emptyState.classList.remove('hidden');
-            else emptyState.classList.add('hidden');
-
-            todos.forEach((todo) => {
-                const li = document.createElement('li');
-                li.className = 'todo-item bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between group';
-                li.innerHTML = `
-                    <div class="flex items-center gap-4">
-                        <button onclick="window.toggleTodo('${todo.id}', ${todo.completed})" class="w-6 h-6 rounded-full border-2 ${todo.completed ? 'bg-green-500 border-green-500' : 'border-gray-200'} flex items-center justify-center transition">
-                            ${todo.completed ? '<i class="fas fa-check text-white text-xs"></i>' : ''}
-                        </button>
-                        <span class="text-gray-700 ${todo.completed ? 'completed' : ''}">${todo.text}</span>
-                    </div>
-                    <button onclick="window.deleteTodo('${todo.id}')" class="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition px-2">
-                        <i class="fas fa-trash-alt"></i>
-                    </button>
-                `;
-                list.appendChild(li);
-            });
-            const remaining = todos.filter(t => !t.completed).length;
-            stats.innerText = `${remaining} úloh zostáva`;
-        }
-
-        window.addEventListener('DOMContentLoaded', initFirebase);
-        
-        document.getElementById('todoInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') window.addTodo();
-        });
+        init();
     </script>
 </body>
 </html>
