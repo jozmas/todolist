@@ -17,8 +17,6 @@
         .completed { text-decoration: line-through; opacity: 0.5; }
         .status-badge { transition: all 0.3s ease; }
         button:active { transform: scale(0.96); }
-        .loading-spinner { border: 2px solid #f3f3f3; border-top: 2px solid #3498db; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body class="min-h-screen py-8 px-4">
@@ -36,7 +34,7 @@
                 </div>
                 <button id="loginBtn" class="flex items-center gap-2 bg-white text-gray-700 px-4 py-2 rounded-xl text-sm font-bold border border-gray-200 hover:bg-gray-50 transition">
                     <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-4 h-4" alt="G">
-                    Prihlásiť
+                    Prihlásiť cez Google
                 </button>
             </div>
         </div>
@@ -78,12 +76,12 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         let db, auth;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-todo-app';
-        let localTodos = []; // Lokálna pamäť funguje okamžite
+        let localTodos = []; 
         let isCloudActive = false;
 
         const elements = {
@@ -155,28 +153,30 @@
         }
 
         async function startApp() {
-            // Skúsime inicializovať Firebase
             try {
                 const config = JSON.parse(__firebase_config);
                 const app = initializeApp(config);
                 auth = getAuth(app);
                 db = getFirestore(app);
 
+                // Spracovanie výsledku po presmerovaní z prihlásenia
+                getRedirectResult(auth).catch(err => console.error("Redirect Result Error:", err));
+
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         elements.userInfo.classList.remove('hidden');
                         elements.loginBtn.classList.add('hidden');
-                        elements.userName.innerText = user.isAnonymous ? "Hosť (Cloud)" : (user.displayName || "Prihlásený");
+                        elements.userName.innerText = user.isAnonymous ? "Hosť (Cloud)" : (user.displayName || "Používateľ");
                         elements.userPhoto.src = user.photoURL || 'https://www.gravatar.com/avatar/000?d=mp&f=y';
                         updateStatusUI(true, "Cloud synchronizácia aktívna");
                         listenForData(user.uid);
                     } else {
-                        updateStatusUI(false, "Čakám na prihlásenie...");
-                        signInAnonymously(auth).catch(() => updateStatusUI(false, "Lokálny režim"));
+                        updateStatusUI(false, "Prihláste sa pre synchronizáciu");
+                        // Voliteľne: signInAnonymously(auth); ak chcete cloud aj bez prihlásenia
                     }
                 });
             } catch (err) {
-                console.warn("Firebase inicializácia zlyhala, bežíme v lokálnom režime.");
+                console.warn("Firebase fail:", err);
                 updateStatusUI(false, "Režim bez internetu");
             }
         }
@@ -190,7 +190,7 @@
                 render(todos);
             }, (err) => {
                 console.error("Snapshot error:", err);
-                updateStatusUI(false, "Chyba cloudu - lokálny režim");
+                updateStatusUI(false, "Chyba prístupu k dátam");
             });
         }
 
@@ -217,11 +217,10 @@
             if (!auth) return;
             const provider = new GoogleAuthProvider();
             try {
-                await signInWithPopup(auth, provider);
+                // Používame redirect namiesto popup pre lepšiu kompatibilitu s mobilmi a GitHub Pages
+                await signInWithRedirect(auth, provider);
             } catch (err) {
                 console.error("Login Error:", err);
-                // Ak zlyhá popup na GitHub Pages, ostaň anonymný, ale skús aspoň anonymné prihlásenie
-                signInAnonymously(auth);
             }
         };
 
@@ -240,7 +239,6 @@
             }
         };
 
-        // Spustíme hneď
         startApp();
         render(localTodos);
     </script>
