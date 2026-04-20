@@ -42,15 +42,15 @@
         </div>
 
         <div class="text-center mb-10">
-            <div id="modeIndicator" class="inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4 bg-gray-100 text-gray-400 status-badge">
-                Inicializácia...
+            <div id="modeIndicator" class="inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4 bg-amber-100 text-amber-600 status-badge">
+                Lokálny režim
             </div>
             <h1 class="text-4xl font-bold text-gray-900 mb-2">Plánovač Úloh</h1>
-            <p id="userStatus" class="text-gray-500 text-sm italic">Pripájanie k systému...</p>
+            <p id="userStatus" class="text-gray-500 text-sm italic">Pripravený na prácu</p>
         </div>
 
         <!-- Vstupná časť -->
-        <div id="appUI" class="opacity-0 transition-opacity duration-500">
+        <div id="appUI" class="transition-opacity duration-500">
             <div class="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 mb-8">
                 <div class="flex gap-3">
                     <input type="text" id="todoInput" placeholder="Čo máte v pláne?" 
@@ -68,9 +68,9 @@
 
             <ul id="todoList" class="space-y-3"></ul>
 
-            <div id="emptyState" class="hidden text-center py-20 text-gray-300">
-                <i class="fas fa-cloud text-6xl mb-4"></i>
-                <p>Zoznam je prázdny</p>
+            <div id="emptyState" class="text-center py-20 text-gray-300">
+                <i class="fas fa-tasks text-6xl mb-4"></i>
+                <p>Žiadne úlohy na dnes</p>
             </div>
         </div>
     </div>
@@ -83,7 +83,8 @@
 
         let db, auth;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-todo-app';
-        let localTodos = []; // Fallback pre lokálny režim
+        let localTodos = []; // Lokálna pamäť funguje okamžite
+        let isCloudActive = false;
 
         const elements = {
             input: document.getElementById('todoInput'),
@@ -91,7 +92,6 @@
             stats: document.getElementById('stats'),
             indicator: document.getElementById('modeIndicator'),
             status: document.getElementById('userStatus'),
-            appUI: document.getElementById('appUI'),
             userInfo: document.getElementById('userInfo'),
             loginBtn: document.getElementById('loginBtn'),
             userName: document.getElementById('userName'),
@@ -102,60 +102,11 @@
             logoutBtn: document.getElementById('logoutBtn')
         };
 
-        function updateStatus(isOnline, text) {
+        function updateStatusUI(isOnline, text) {
             elements.indicator.innerText = isOnline ? "Online" : "Lokálne";
             elements.indicator.className = `inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4 status-badge ${isOnline ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`;
             elements.status.innerText = text;
-        }
-
-        // --- HLAVNÁ INICIALIZÁCIA ---
-        async function startApp() {
-            elements.appUI.classList.remove('opacity-0');
-            elements.appUI.classList.add('opacity-100');
-
-            try {
-                const config = JSON.parse(__firebase_config);
-                const app = initializeApp(config);
-                auth = getAuth(app);
-                db = getFirestore(app);
-
-                onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        elements.userInfo.classList.remove('hidden');
-                        elements.loginBtn.classList.add('hidden');
-                        elements.userName.innerText = user.isAnonymous ? "Hosť (Cloud)" : user.displayName;
-                        elements.userPhoto.src = user.photoURL || 'https://www.gravatar.com/avatar/000?d=mp&f=y';
-                        updateStatus(true, user.isAnonymous ? "Anonymný cloud aktívny" : "Cloud synchronizácia beží");
-                        listenForData(user.uid);
-                    } else {
-                        elements.userInfo.classList.add('hidden');
-                        elements.loginBtn.classList.remove('hidden');
-                        // Ak nie je nikto prihlásený, skúsime anonymne
-                        signInAnonymously(auth).catch(fallbackToLocal);
-                    }
-                });
-            } catch (err) {
-                console.error("Firebase fail:", err);
-                fallbackToLocal();
-            }
-        }
-
-        function fallbackToLocal() {
-            updateStatus(false, "Režim bez cloudu (lokálny)");
-            render(localTodos);
-        }
-
-        function listenForData(uid) {
-            const q = collection(db, 'artifacts', appId, 'users', uid, 'todos');
-            onSnapshot(q, (snap) => {
-                const todos = [];
-                snap.forEach(d => todos.push({ id: d.id, ...d.data() }));
-                todos.sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-                render(todos);
-            }, (err) => {
-                console.error("Snapshot error:", err);
-                fallbackToLocal();
-            });
+            isCloudActive = isOnline;
         }
 
         function render(todos) {
@@ -163,7 +114,7 @@
             if (todos.length === 0) elements.emptyState.classList.remove('hidden');
             else elements.emptyState.classList.add('hidden');
 
-            todos.forEach(todo => {
+            todos.forEach((todo, index) => {
                 const li = document.createElement('li');
                 li.className = 'todo-item bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between group';
                 li.innerHTML = `
@@ -178,22 +129,22 @@
                     </button>
                 `;
 
-                li.querySelector('.check-btn').onclick = () => {
-                    if (db && auth.currentUser) {
-                        updateDoc(doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'todos', todo.id), {
+                li.querySelector('.check-btn').onclick = async () => {
+                    if (isCloudActive && auth.currentUser) {
+                        await updateDoc(doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'todos', todo.id), {
                             completed: !todo.completed
                         });
                     } else {
-                        todo.completed = !todo.completed;
+                        localTodos[index].completed = !localTodos[index].completed;
                         render(localTodos);
                     }
                 };
 
-                li.querySelector('.del-btn').onclick = () => {
-                    if (db && auth.currentUser) {
-                        deleteDoc(doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'todos', todo.id));
+                li.querySelector('.del-btn').onclick = async () => {
+                    if (isCloudActive && auth.currentUser) {
+                        await deleteDoc(doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'todos', todo.id));
                     } else {
-                        localTodos = localTodos.filter(t => t !== todo);
+                        localTodos.splice(index, 1);
                         render(localTodos);
                     }
                 };
@@ -203,22 +154,57 @@
             elements.stats.innerText = `${todos.filter(t => !t.completed).length} úloh zostáva`;
         }
 
-        // --- UDALOSTI ---
+        async function startApp() {
+            // Skúsime inicializovať Firebase
+            try {
+                const config = JSON.parse(__firebase_config);
+                const app = initializeApp(config);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        elements.userInfo.classList.remove('hidden');
+                        elements.loginBtn.classList.add('hidden');
+                        elements.userName.innerText = user.isAnonymous ? "Hosť (Cloud)" : (user.displayName || "Prihlásený");
+                        elements.userPhoto.src = user.photoURL || 'https://www.gravatar.com/avatar/000?d=mp&f=y';
+                        updateStatusUI(true, "Cloud synchronizácia aktívna");
+                        listenForData(user.uid);
+                    } else {
+                        updateStatusUI(false, "Čakám na prihlásenie...");
+                        signInAnonymously(auth).catch(() => updateStatusUI(false, "Lokálny režim"));
+                    }
+                });
+            } catch (err) {
+                console.warn("Firebase inicializácia zlyhala, bežíme v lokálnom režime.");
+                updateStatusUI(false, "Režim bez internetu");
+            }
+        }
+
+        function listenForData(uid) {
+            const q = collection(db, 'artifacts', appId, 'users', uid, 'todos');
+            onSnapshot(q, (snap) => {
+                const todos = [];
+                snap.forEach(d => todos.push({ id: d.id, ...d.data() }));
+                todos.sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                render(todos);
+            }, (err) => {
+                console.error("Snapshot error:", err);
+                updateStatusUI(false, "Chyba cloudu - lokálny režim");
+            });
+        }
+
         elements.addBtn.onclick = async () => {
             const val = elements.input.value.trim();
             if (!val) return;
             elements.input.value = '';
 
-            if (db && auth.currentUser) {
-                try {
-                    await addDoc(collection(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'todos'), {
-                        text: val,
-                        completed: false,
-                        createdAt: serverTimestamp()
-                    });
-                } catch (e) {
-                    console.error("Add error:", e);
-                }
+            if (isCloudActive && auth.currentUser) {
+                await addDoc(collection(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'todos'), {
+                    text: val,
+                    completed: false,
+                    createdAt: serverTimestamp()
+                });
             } else {
                 localTodos.unshift({ text: val, completed: false, id: Date.now() });
                 render(localTodos);
@@ -231,20 +217,18 @@
             if (!auth) return;
             const provider = new GoogleAuthProvider();
             try {
-                // Pokus o prihlásenie cez popup
                 await signInWithPopup(auth, provider);
             } catch (err) {
-                console.warn("Popup blocked or failed, continuing as guest.");
-                // Ak zlyhá popup (bežné v iFrame), zostávame v anonymnom režime, ktorý sa spustil v startApp
+                console.error("Login Error:", err);
+                // Ak zlyhá popup na GitHub Pages, ostaň anonymný, ale skús aspoň anonymné prihlásenie
+                signInAnonymously(auth);
             }
         };
 
-        elements.logoutBtn.onclick = () => {
-            if (auth) signOut(auth);
-        };
+        elements.logoutBtn.onclick = () => auth && signOut(auth);
 
         elements.clearBtn.onclick = async () => {
-            if (db && auth.currentUser) {
+            if (isCloudActive && auth.currentUser) {
                 const q = collection(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'todos');
                 const snap = await getDocs(q);
                 const batch = writeBatch(db);
@@ -256,8 +240,9 @@
             }
         };
 
-        // Spustenie
+        // Spustíme hneď
         startApp();
+        render(localTodos);
     </script>
 </body>
 </html>
