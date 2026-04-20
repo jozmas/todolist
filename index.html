@@ -27,11 +27,11 @@
                 <div id="userInfo" class="hidden flex items-center gap-3 pl-2">
                     <img id="userPhoto" src="" alt="" class="w-8 h-8 rounded-full">
                     <span id="userName" class="text-sm font-semibold text-gray-700"></span>
-                    <button onclick="logout()" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-xl transition">
+                    <button onclick="window.logout()" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-xl transition">
                         Odhlásiť
                     </button>
                 </div>
-                <button id="loginBtn" onclick="login()" class="flex items-center gap-2 bg-white text-gray-700 px-4 py-2 rounded-xl text-sm font-bold border border-gray-200 hover:bg-gray-50 transition">
+                <button id="loginBtn" onclick="window.login()" class="flex items-center gap-2 bg-white text-gray-700 px-4 py-2 rounded-xl text-sm font-bold border border-gray-200 hover:bg-gray-50 transition">
                     <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-4 h-4 text-xs" alt="G">
                     Prihlásiť cez Google
                 </button>
@@ -52,7 +52,7 @@
                 <div class="flex gap-3">
                     <input type="text" id="todoInput" placeholder="Čo treba urobiť?" 
                         class="flex-1 bg-gray-50 border border-gray-200 rounded-2xl py-3 px-5 focus:outline-none focus:ring-2 focus:ring-blue-500 transition text-gray-800">
-                    <button onclick="addTodo()" id="addBtn" class="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-100">
+                    <button onclick="window.addTodo()" id="addBtn" class="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-100">
                         <i class="fas fa-plus"></i>
                     </button>
                 </div>
@@ -61,7 +61,7 @@
             <div class="flex justify-between items-center mb-6 px-2">
                 <div id="stats" class="text-sm font-semibold text-gray-400 uppercase tracking-wider">0 úloh</div>
                 <div class="flex gap-2 text-xs font-bold">
-                    <button onclick="clearCompleted()" class="px-3 py-1 rounded-lg text-red-400 hover:bg-red-50">Vymazať hotové</button>
+                    <button onclick="window.clearCompleted()" class="px-3 py-1 rounded-lg text-red-400 hover:bg-red-50">Vymazať hotové</button>
                 </div>
             </div>
 
@@ -78,7 +78,7 @@
             <i class="fas fa-lock text-4xl text-gray-200 mb-4"></i>
             <h3 class="text-xl font-bold text-gray-700 mb-2">Prístup k úlohám zamknutý</h3>
             <p class="text-gray-500 max-w-xs mx-auto mb-6">Pre synchronizáciu medzi zariadeniami sa prihláste. Ak Google nefunguje, použijeme anonymný režim.</p>
-            <button onclick="login()" class="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-100">
+            <button onclick="window.login()" class="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-100">
                 Aktivovať synchronizáciu
             </button>
         </div>
@@ -95,18 +95,16 @@
 
         const setMode = (isOnline, label) => {
             const indicator = document.getElementById('modeIndicator');
-            if (isOnline) {
-                indicator.innerText = 'Online ' + label;
-                indicator.className = 'inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4 bg-green-100 text-green-600 status-badge';
-            } else {
-                indicator.innerText = label;
-                indicator.className = 'inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4 bg-orange-100 text-orange-600 status-badge';
+            if (indicator) {
+                indicator.innerText = (isOnline ? 'Online ' : '') + label;
+                indicator.className = `inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-4 status-badge ${isOnline ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'}`;
             }
         };
 
         const initFirebase = async () => {
             const statusEl = document.getElementById('userStatus');
             const inputSection = document.getElementById('inputSection');
+            const loginPrompt = document.getElementById('loginPrompt');
             
             try {
                 let configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
@@ -114,10 +112,9 @@
                 if (!configStr) {
                     setMode(false, "Lokálny režim");
                     statusEl.innerText = "Cloud konfigurácia nie je dostupná.";
-                    // V lokálnom režime aspoň odomkneme UI, hoci dáta sa nebudú nikde ukladať
                     inputSection.classList.remove('hidden');
                     setTimeout(() => inputSection.classList.add('opacity-100'), 50);
-                    document.getElementById('loginPrompt').classList.add('hidden');
+                    loginPrompt.classList.add('hidden');
                     return;
                 }
 
@@ -128,16 +125,20 @@
 
                 setupAuthListener();
                 
+                // Priorita prihlásenia
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
+                    try {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } catch (e) {
+                        await signInAnonymously(auth);
+                    }
                 } else {
                     await signInAnonymously(auth);
                 }
             } catch (e) {
                 console.error("Firebase Error:", e);
-                setMode(false, "Chyba konfigurácie");
-                statusEl.innerText = "Chyba pripojenia k databáze.";
-                statusEl.classList.add('text-red-500');
+                setMode(false, "Chyba DB");
+                statusEl.innerText = "Chyba pripojenia.";
             }
         };
 
@@ -165,8 +166,7 @@
                     document.getElementById('userPhoto').src = u.photoURL || 'https://www.gravatar.com/avatar/000?d=mp&f=y';
                     
                     setMode(true, "Cloud Plánovač");
-                    userStatus.innerText = u.isAnonymous ? "Úlohy sa ukladajú anonymne do cloudu" : "Vaše úlohy sú plne synchronizované";
-                    userStatus.classList.remove('text-red-500');
+                    userStatus.innerText = u.isAnonymous ? "Anonymný cloud" : "Synchronizácia aktívna";
                     
                     initTodoListener();
                 } else {
@@ -175,30 +175,33 @@
                     userInfo.classList.add('hidden');
                     loginBtn.classList.remove('hidden');
                     inputSection.classList.add('hidden');
-                    inputSection.classList.remove('opacity-100');
                     loginPrompt.classList.remove('hidden');
-                    userStatus.innerText = "Vyžaduje sa prihlásenie pre Cloud";
-                    document.getElementById('todoList').innerHTML = '';
                 }
             });
         };
 
+        // EXPLICITNÉ PRIRADENIE K WINDOW (Pre fungovanie onclick)
         window.login = async () => {
             if (!auth) await initFirebase();
             if (auth) {
                 try {
                     await signInWithPopup(auth, provider);
                 } catch (err) {
-                    console.warn("Google Login neúspešný (pravdepodobne blokované vyskakovacie okno)");
+                    console.warn("Login popup blocked:", err.code);
+                    await signInAnonymously(auth);
                 }
             }
         };
 
-        window.logout = () => auth && signOut(auth);
+        window.logout = () => {
+            if (auth) signOut(auth).then(() => signInAnonymously(auth));
+        };
 
         function initTodoListener() {
             if (!user || !db) return;
             const q = collection(db, 'artifacts', appId, 'users', user.uid, 'todos');
+            if (unsubscribe) unsubscribe();
+
             unsubscribe = onSnapshot(q, (snapshot) => {
                 const todos = [];
                 snapshot.forEach((doc) => {
@@ -206,9 +209,7 @@
                 });
                 todos.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
                 renderTodos(todos);
-            }, (error) => {
-                console.error("Firestore Error:", error);
-            });
+            }, (error) => console.error(error));
         }
 
         window.addTodo = async () => {
@@ -216,20 +217,11 @@
             const text = input.value.trim();
             if (text && user && db) {
                 input.value = '';
-                try {
-                    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'todos'), {
-                        text,
-                        completed: false,
-                        createdAt: serverTimestamp()
-                    });
-                } catch (e) {
-                    console.error("Save failed:", e);
-                    input.value = text;
-                }
-            } else if (text && !db) {
-                // Lokálny fallback pre demo účely bez DB
-                renderTodos([{ id: Date.now(), text, completed: false }]);
-                input.value = '';
+                await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'todos'), {
+                    text,
+                    completed: false,
+                    createdAt: serverTimestamp()
+                });
             }
         };
 
@@ -259,7 +251,6 @@
             const list = document.getElementById('todoList');
             const emptyState = document.getElementById('emptyState');
             const stats = document.getElementById('stats');
-            if (!list) return;
             
             list.innerHTML = '';
             if (todos.length === 0) emptyState.classList.remove('hidden');
@@ -270,12 +261,12 @@
                 li.className = 'todo-item bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between group';
                 li.innerHTML = `
                     <div class="flex items-center gap-4">
-                        <button onclick="toggleTodo('${todo.id}', ${todo.completed})" class="w-6 h-6 rounded-full border-2 ${todo.completed ? 'bg-green-500 border-green-500' : 'border-gray-200'} flex items-center justify-center transition">
+                        <button onclick="window.toggleTodo('${todo.id}', ${todo.completed})" class="w-6 h-6 rounded-full border-2 ${todo.completed ? 'bg-green-500 border-green-500' : 'border-gray-200'} flex items-center justify-center transition">
                             ${todo.completed ? '<i class="fas fa-check text-white text-xs"></i>' : ''}
                         </button>
                         <span class="text-gray-700 ${todo.completed ? 'completed' : ''}">${todo.text}</span>
                     </div>
-                    <button onclick="deleteTodo('${todo.id}')" class="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition px-2">
+                    <button onclick="window.deleteTodo('${todo.id}')" class="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition px-2">
                         <i class="fas fa-trash-alt"></i>
                     </button>
                 `;
@@ -285,7 +276,7 @@
             stats.innerText = `${remaining} úloh zostáva`;
         }
 
-        window.addEventListener('load', initFirebase);
+        window.addEventListener('DOMContentLoaded', initFirebase);
         
         document.getElementById('todoInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') window.addTodo();
